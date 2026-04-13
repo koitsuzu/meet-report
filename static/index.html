@@ -561,11 +561,7 @@
                     <div class="form-hint">提供描述可幫助 AI 更精準地識別會議類型與參與者</div>
                 </div>
 
-                <div class="form-group">
-                    <label>📧 Email（選填）</label>
-                    <input type="email" id="emailInput" placeholder="john@example.com">
-                    <div class="form-hint">填寫後，會議記錄將自動寄送至此信箱</div>
-                </div>
+
             </div>
 
             <button class="submit-btn" id="submitBtn" disabled onclick="startProcessing()">
@@ -696,7 +692,7 @@
         const formData = new FormData();
         formData.append('file', selectedFile);
         formData.append('description', document.getElementById('descInput').value);
-        formData.append('email', document.getElementById('emailInput').value);
+
 
         // Show progress
         document.getElementById('uploadCard').style.display = 'none';
@@ -781,12 +777,6 @@
                 </div>`;
         });
 
-        const emailArea = document.getElementById('emailStatusArea');
-        if (job.email_sent) {
-            emailArea.innerHTML = `<div class="email-status sent">📧 會議記錄已寄送至 ${job.email}</div>`;
-        } else if (job.email) {
-            emailArea.innerHTML = `<div class="email-status skipped">📧 Email 寄送未啟用（需設定 SMTP）</div>`;
-        }
     }
 
     function resetForm() {

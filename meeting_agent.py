@@ -518,7 +518,7 @@ def summary_node(state: AgentState) -> AgentState:
 
     try:
         result = subprocess.run(
-            [sys.executable, str(script_path), "--input", str(json_path), "--dir", str(output_dir)],
+            [sys.executable, str(script_path), "--input", str(json_path), "--dir", str(output_dir), "--output", stem],
             capture_output=True, text=True, timeout=30
         )
         if result.returncode != 0:
