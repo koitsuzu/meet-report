@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meeting Agent — 智慧會議記錄</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0e1a;
+            --bg-secondary: #111827;
+            --bg-card: rgba(17, 24, 39, 0.7);
+            --bg-glass: rgba(255, 255, 255, 0.04);
+            --border: rgba(255, 255, 255, 0.08);
+            --border-active: rgba(99, 102, 241, 0.5);
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent: #6366f1;
+            --accent-light: #818cf8;
+            --accent-glow: rgba(99, 102, 241, 0.15);
+            --success: #22c55e;
+            --success-glow: rgba(34, 197, 94, 0.15);
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --gradient-1: linear-gradient(135deg, #6366f1, #8b5cf6, #a78bfa);
+            --gradient-2: linear-gradient(135deg, #0ea5e9, #6366f1);
+            --shadow-lg: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', 'Noto Sans TC', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* ── Background effect ── */
+        body::before {
+            content: '';
+            position: fixed;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle at 30% 20%, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
+                        radial-gradient(circle at 70% 80%, rgba(139, 92, 246, 0.06) 0%, transparent 50%);
+            z-index: 0;
+            animation: float 20s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translate(0, 0); }
+            50% { transform: translate(-2%, 2%); }
+        }
+
+        /* ── Layout ── */
+        .container {
+            position: relative;
+            z-index: 1;
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        /* ── Header ── */
+        .header {
+            text-align: center;
+            margin-bottom: 48px;
+        }
+
+        .header-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            background: var(--accent-glow);
+            border: 1px solid rgba(99, 102, 241, 0.2);
+            border-radius: 100px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--accent-light);
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            margin-bottom: 20px;
+        }
+
+        .header h1 {
+            font-size: 2.4em;
+            font-weight: 800;
+            background: var(--gradient-1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            line-height: 1.2;
+            margin-bottom: 12px;
+        }
+
+        .header p {
+            color: var(--text-secondary);
+            font-size: 1.05em;
+            line-height: 1.6;
+        }
+
+        /* ── Card ── */
+        .card {
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 32px;
+            margin-bottom: 24px;
+            transition: border-color 0.3s ease;
+        }
+
+        .card:hover {
+            border-color: rgba(255, 255, 255, 0.12);
+        }
+
+        .card-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 1.1em;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: var(--text-primary);
+        }
+
+        .card-title .icon {
+            font-size: 1.3em;
+        }
+
+        /* ── Drop zone ── */
+        .drop-zone {
+            border: 2px dashed rgba(99, 102, 241, 0.3);
+            border-radius: 16px;
+            padding: 48px 24px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: var(--bg-glass);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .drop-zone::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: var(--accent-glow);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: var(--accent);
+            transform: translateY(-2px);
+        }
+
+        .drop-zone:hover::before, .drop-zone.dragover::before {
+            opacity: 1;
+        }
+
+        .drop-zone .upload-icon {
+            font-size: 3em;
+            margin-bottom: 12px;
+            display: block;
+        }
+
+        .drop-zone .drop-text {
+            font-size: 1.05em;
+            color: var(--text-secondary);
+            position: relative;
+            z-index: 1;
+        }
+
+        .drop-zone .drop-hint {
+            font-size: 0.85em;
+            color: var(--text-muted);
+            margin-top: 8px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .drop-zone.has-file {
+            border-color: var(--success);
+            background: var(--success-glow);
+        }
+
+        .drop-zone.has-file .file-info {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .file-info .file-name {
+            font-weight: 600;
+            color: var(--success);
+        }
+
+        .file-info .file-size {
+            color: var(--text-muted);
+            font-size: 0.85em;
+        }
+
+        .file-info .remove-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 1.2em;
+            padding: 4px;
+            transition: color 0.2s;
+        }
+
+        .file-info .remove-btn:hover {
+            color: var(--error);
+        }
+
+        #fileInput { display: none; }
+
+        /* ── Form inputs ── */
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.88em;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            letter-spacing: 0.3px;
+        }
+
+        .form-group input, .form-group textarea {
+            width: 100%;
+            padding: 12px 16px;
+            background: var(--bg-glass);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 0.95em;
+            transition: all 0.2s;
+            outline: none;
+        }
+
+        .form-group input:focus, .form-group textarea:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+
+        .form-group input::placeholder, .form-group textarea::placeholder {
+            color: var(--text-muted);
+        }
+
+        .form-group textarea { resize: vertical; min-height: 80px; }
+
+        .form-hint {
+            font-size: 0.78em;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+
+        /* ── Submit button ── */
+        .submit-btn {
+            width: 100%;
+            padding: 16px;
+            background: var(--gradient-1);
+            border: none;
+            border-radius: 14px;
+            color: white;
+            font-family: inherit;
+            font-size: 1.05em;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s;
+            letter-spacing: 0.3px;
+            box-shadow: 0 4px 20px rgba(99, 102, 241, 0.3);
+        }
+
+        .submit-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(99, 102, 241, 0.4);
+        }
+
+        .submit-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* ── Progress section ── */
+        .progress-section {
+            display: none;
+        }
+
+        .progress-section.active {
+            display: block;
+            animation: fadeIn 0.5s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .pipeline-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+        }
+
+        .pipeline-step {
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+            padding: 16px 0;
+            position: relative;
+        }
+
+        .pipeline-step::before {
+            content: '';
+            position: absolute;
+            left: 17px;
+            top: 44px;
+            width: 2px;
+            height: calc(100% - 28px);
+            background: var(--border);
+        }
+
+        .pipeline-step:last-child::before { display: none; }
+
+        .step-indicator {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.85em;
+            font-weight: 700;
+            flex-shrink: 0;
+            border: 2px solid var(--border);
+            background: var(--bg-secondary);
+            color: var(--text-muted);
+            transition: all 0.4s;
+            z-index: 1;
+        }
+
+        .pipeline-step.active .step-indicator {
+            border-color: var(--accent);
+            background: var(--accent-glow);
+            color: var(--accent-light);
+            animation: pulse 1.5s infinite;
+        }
+
+        .pipeline-step.done .step-indicator {
+            border-color: var(--success);
+            background: var(--success-glow);
+            color: var(--success);
+        }
+
+        .pipeline-step.error .step-indicator {
+            border-color: var(--error);
+            color: var(--error);
+        }
+
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
+            50% { box-shadow: 0 0 0 8px rgba(99, 102, 241, 0); }
+        }
+
+        .step-content {
+            flex: 1;
+            padding-top: 6px;
+        }
+
+        .step-content .step-title {
+            font-weight: 600;
+            font-size: 0.95em;
+            margin-bottom: 4px;
+        }
+
+        .step-content .step-desc {
+            font-size: 0.82em;
+            color: var(--text-muted);
+        }
+
+        /* ── Result section ── */
+        .result-section {
+            display: none;
+        }
+
+        .result-section.active {
+            display: block;
+            animation: fadeIn 0.5s ease;
+        }
+
+        .result-summary {
+            background: var(--success-glow);
+            border: 1px solid rgba(34, 197, 94, 0.2);
+            border-radius: 14px;
+            padding: 20px;
+            margin-bottom: 20px;
+            white-space: pre-line;
+            font-size: 0.92em;
+            line-height: 1.7;
+            color: var(--text-secondary);
+        }
+
+        .download-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .download-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 18px;
+            background: var(--bg-glass);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            transition: all 0.2s;
+        }
+
+        .download-item:hover {
+            border-color: var(--accent);
+            background: var(--accent-glow);
+        }
+
+        .download-item .file-label {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .download-item .file-ext {
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.75em;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .ext-docx { background: rgba(37, 99, 235, 0.15); color: #60a5fa; }
+        .ext-md { background: rgba(34, 197, 94, 0.15); color: #4ade80; }
+        .ext-json { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+
+        .download-item a {
+            padding: 8px 18px;
+            background: var(--gradient-2);
+            border-radius: 8px;
+            color: white;
+            text-decoration: none;
+            font-size: 0.82em;
+            font-weight: 600;
+            transition: transform 0.2s;
+        }
+
+        .download-item a:hover { transform: translateY(-1px); }
+
+        .email-status {
+            margin-top: 16px;
+            padding: 12px 16px;
+            border-radius: 10px;
+            font-size: 0.88em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .email-status.sent {
+            background: var(--success-glow);
+            border: 1px solid rgba(34, 197, 94, 0.2);
+            color: var(--success);
+        }
+
+        .email-status.skipped {
+            background: var(--bg-glass);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+        }
+
+        /* ── New job button ── */
+        .new-job-btn {
+            margin-top: 20px;
+            width: 100%;
+            padding: 14px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            color: var(--text-secondary);
+            font-family: inherit;
+            font-size: 0.95em;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .new-job-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent-light);
+        }
+
+        /* ── Footer ── */
+        .footer {
+            text-align: center;
+            margin-top: 48px;
+            color: var(--text-muted);
+            font-size: 0.82em;
+        }
+
+        /* ── Responsive ── */
+        @media (max-width: 600px) {
+            .container { padding: 24px 16px; }
+            .header h1 { font-size: 1.8em; }
+            .card { padding: 24px; }
+            .drop-zone { padding: 32px 16px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div class="header-badge">🤖 Multi-Agent System</div>
+            <h1>Meeting Agent</h1>
+            <p>上傳 Zoom 錄影，自動生成專業會議記錄<br>支援 Word 與 Markdown 雙格式輸出</p>
+        </div>
+
+        <!-- Upload Form -->
+        <div class="card" id="uploadCard">
+            <div class="card-title">
+                <span class="icon">📂</span> 上傳會議錄影
+            </div>
+
+            <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+                <div id="dropContent">
+                    <span class="upload-icon">🎬</span>
+                    <div class="drop-text">拖放影片檔或點擊選擇</div>
+                    <div class="drop-hint">支援 MP4、MOV、MKV、AVI（最大 500MB）</div>
+                </div>
+                <input type="file" id="fileInput" accept=".mp4,.mov,.mkv,.avi">
+            </div>
+
+            <div style="margin-top: 24px;">
+                <div class="form-group">
+                    <label>會議描述（選填）</label>
+                    <textarea id="descInput" placeholder="例如：MIS 週會、每週例會…"></textarea>
+                    <div class="form-hint">提供描述可幫助 AI 更精準地識別會議類型與參與者</div>
+                </div>
+
+                <div class="form-group">
+                    <label>📧 Email（選填）</label>
+                    <input type="email" id="emailInput" placeholder="john@example.com">
+                    <div class="form-hint">填寫後，會議記錄將自動寄送至此信箱</div>
+                </div>
+            </div>
+
+            <button class="submit-btn" id="submitBtn" disabled onclick="startProcessing()">
+                🚀 開始處理
+            </button>
+        </div>
+
+        <!-- Progress -->
+        <div class="card progress-section" id="progressSection">
+            <div class="card-title">
+                <span class="icon">⚙️</span> 處理進度
+            </div>
+            <div class="pipeline-steps">
+                <div class="pipeline-step" id="step-upload">
+                    <div class="step-indicator">1</div>
+                    <div class="step-content">
+                        <div class="step-title">上傳檔案</div>
+                        <div class="step-desc">正在上傳至伺服器...</div>
+                    </div>
+                </div>
+                <div class="pipeline-step" id="step-transcribe">
+                    <div class="step-indicator">2</div>
+                    <div class="step-content">
+                        <div class="step-title">Transcriber Agent</div>
+                        <div class="step-desc">提取音訊並使用 Whisper 轉錄逐字稿</div>
+                    </div>
+                </div>
+                <div class="pipeline-step" id="step-summary">
+                    <div class="step-indicator">3</div>
+                    <div class="step-content">
+                        <div class="step-title">Summary Agent</div>
+                        <div class="step-desc">AI 分析逐字稿並提取結構化資料</div>
+                    </div>
+                </div>
+                <div class="pipeline-step" id="step-generate">
+                    <div class="step-indicator">4</div>
+                    <div class="step-content">
+                        <div class="step-title">文件生成</div>
+                        <div class="step-desc">產出 Word 與 Markdown 文件</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Result -->
+        <div class="card result-section" id="resultSection">
+            <div class="card-title">
+                <span class="icon">✅</span> 處理完成
+            </div>
+            <div class="result-summary" id="resultSummary"></div>
+            <div class="download-list" id="downloadList"></div>
+            <div id="emailStatusArea"></div>
+            <button class="new-job-btn" onclick="resetForm()">+ 處理另一個會議</button>
+        </div>
+
+        <div class="footer">
+            Meeting Agent v1.0 — Powered by LangGraph × Gemini × Whisper
+        </div>
+    </div>
+
+<script>
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const submitBtn = document.getElementById('submitBtn');
+    let selectedFile = null;
+
+    // ── Drag & Drop ──
+    ['dragenter', 'dragover'].forEach(evt => {
+        dropZone.addEventListener(evt, e => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+    });
+
+    ['dragleave', 'drop'].forEach(evt => {
+        dropZone.addEventListener(evt, e => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+        });
+    });
+
+    dropZone.addEventListener('drop', e => {
+        const files = e.dataTransfer.files;
+        if (files.length > 0) handleFile(files[0]);
+    });
+
+    fileInput.addEventListener('change', e => {
+        if (e.target.files.length > 0) handleFile(e.target.files[0]);
+    });
+
+    function handleFile(file) {
+        const ext = file.name.split('.').pop().toLowerCase();
+        if (!['mp4', 'mov', 'mkv', 'avi'].includes(ext)) {
+            alert('不支援的格式，請上傳 MP4、MOV、MKV 或 AVI 檔案');
+            return;
+        }
+        selectedFile = file;
+        const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+        dropZone.classList.add('has-file');
+        document.getElementById('dropContent').innerHTML = `
+            <div class="file-info">
+                <span>🎬</span>
+                <span class="file-name">${file.name}</span>
+                <span class="file-size">(${sizeMB} MB)</span>
+                <button class="remove-btn" onclick="event.stopPropagation(); removeFile()">✕</button>
+            </div>`;
+        submitBtn.disabled = false;
+    }
+
+    function removeFile() {
+        selectedFile = null;
+        fileInput.value = '';
+        dropZone.classList.remove('has-file');
+        document.getElementById('dropContent').innerHTML = `
+            <span class="upload-icon">🎬</span>
+            <div class="drop-text">拖放影片檔或點擊選擇</div>
+            <div class="drop-hint">支援 MP4、MOV、MKV、AVI（最大 500MB）</div>`;
+        submitBtn.disabled = true;
+    }
+
+    // ── Processing ──
+    async function startProcessing() {
+        if (!selectedFile) return;
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = '⏳ 上傳中...';
+
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+        formData.append('description', document.getElementById('descInput').value);
+        formData.append('email', document.getElementById('emailInput').value);
+
+        // Show progress
+        document.getElementById('uploadCard').style.display = 'none';
+        const progressSection = document.getElementById('progressSection');
+        progressSection.classList.add('active');
+        setStep('step-upload', 'active');
+
+        try {
+            const res = await fetch('/api/upload', { method: 'POST', body: formData });
+            const data = await res.json();
+
+            setStep('step-upload', 'done');
+            setStep('step-transcribe', 'active');
+
+            // Poll for status
+            pollStatus(data.job_id);
+        } catch (err) {
+            setStep('step-upload', 'error');
+            alert('上傳失敗：' + err.message);
+        }
+    }
+
+    function pollStatus(jobId) {
+        const interval = setInterval(async () => {
+            try {
+                const res = await fetch(`/api/status/${jobId}`);
+                const job = await res.json();
+
+                if (job.status === 'transcribing') {
+                    setStep('step-transcribe', 'active');
+                }
+
+                if (job.status === 'completed') {
+                    clearInterval(interval);
+                    setStep('step-transcribe', 'done');
+                    setStep('step-summary', 'done');
+                    setStep('step-generate', 'done');
+                    showResult(job);
+                }
+
+                if (job.status === 'error') {
+                    clearInterval(interval);
+                    setStep('step-transcribe', 'error');
+                    alert('處理失敗：' + (job.error || 'Unknown error'));
+                }
+            } catch (e) {
+                console.error('Poll error:', e);
+            }
+        }, 2000);
+    }
+
+    function setStep(stepId, state) {
+        const step = document.getElementById(stepId);
+        step.className = `pipeline-step ${state}`;
+        const indicator = step.querySelector('.step-indicator');
+        if (state === 'done') indicator.textContent = '✓';
+        else if (state === 'error') indicator.textContent = '✕';
+    }
+
+    function showResult(job) {
+        document.getElementById('progressSection').classList.remove('active');
+        const resultSection = document.getElementById('resultSection');
+        resultSection.classList.add('active');
+
+        document.getElementById('resultSummary').textContent =
+            job.result?.final_answer || '處理完成';
+
+        const downloadList = document.getElementById('downloadList');
+        downloadList.innerHTML = '';
+        (job.result?.output_files || []).forEach(fpath => {
+            const fname = fpath.split('/').pop();
+            const ext = fname.split('.').pop().toLowerCase();
+            const extClass = ext === 'docx' ? 'ext-docx' : ext === 'md' ? 'ext-md' : 'ext-json';
+            const extLabel = ext.toUpperCase();
+            downloadList.innerHTML += `
+                <div class="download-item">
+                    <div class="file-label">
+                        <span class="file-ext ${extClass}">${extLabel}</span>
+                        <span>${fname}</span>
+                    </div>
+                    <a href="/api/download/${job.id}/${encodeURIComponent(fname)}" download>下載</a>
+                </div>`;
+        });
+
+        const emailArea = document.getElementById('emailStatusArea');
+        if (job.email_sent) {
+            emailArea.innerHTML = `<div class="email-status sent">📧 會議記錄已寄送至 ${job.email}</div>`;
+        } else if (job.email) {
+            emailArea.innerHTML = `<div class="email-status skipped">📧 Email 寄送未啟用（需設定 SMTP）</div>`;
+        }
+    }
+
+    function resetForm() {
+        document.getElementById('resultSection').classList.remove('active');
+        document.getElementById('uploadCard').style.display = 'block';
+        removeFile();
+        document.getElementById('descInput').value = '';
+        submitBtn.textContent = '🚀 開始處理';
+
+        // Reset steps
+        ['step-upload', 'step-transcribe', 'step-summary', 'step-generate'].forEach(id => {
+            const step = document.getElementById(id);
+            step.className = 'pipeline-step';
+            const num = id.split('-')[1];
+            const idx = {'upload': '1', 'transcribe': '2', 'summary': '3', 'generate': '4'}[num];
+            step.querySelector('.step-indicator').textContent = idx;
+        });
+    }
+</script>
+</body>
+</html>

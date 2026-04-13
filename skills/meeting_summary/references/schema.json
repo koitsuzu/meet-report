@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MeetingMinutes",
+  "description": "Standard data contract for the meeting_summary skill. The AI extraction step must output this format for generate_docs.py to consume.",
+  "type": "object",
+  "required": ["meeting_info", "attendees", "discussion", "action_items"],
+  "properties": {
+    "meeting_info": {
+      "type": "object",
+      "description": "Core metadata about the meeting.",
+      "required": ["topic", "room", "datetime", "recorder"],
+      "properties": {
+        "topic":    { "type": "string", "description": "會議主題，例如 'MIS週會'" },
+        "room":     { "type": "string", "description": "會議室或平台，例如 'Zoom'" },
+        "datetime": { "type": "string", "description": "日期時間，格式 YYYY/MM/DD HH:MM" },
+        "recorder": { "type": "string", "description": "會議記錄人姓名" }
+      }
+    },
+    "attendees": {
+      "type": "object",
+      "description": "Attendance information.",
+      "required": ["expected", "present"],
+      "properties": {
+        "expected": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "應出席人員清單（姓名列表）"
+        },
+        "present": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "實際與會人員清單（姓名列表，由逐字稿中識別出在場者）"
+        }
+      }
+    },
+    "discussion": {
+      "type": "array",
+      "description": "Each person's report summary. Order should follow the meeting flow.",
+      "items": {
+        "type": "object",
+        "required": ["speaker", "points"],
+        "properties": {
+          "speaker": { "type": "string", "description": "發言人姓名" },
+          "points": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "此人本週彙報重點，每條 1 句話。若該人在逐字稿中未有實質內容，points 為空陣列。",
+            "minItems": 0
+          }
+        }
+      }
+    },
+    "announcements": {
+      "type": "array",
+      "description": "全體公告或備忘資訊（如月會時間、投影分工等）。可為空。",
+      "items": { "type": "string" }
+    },
+    "action_items": {
+      "type": "array",
+      "description": "會議中出現的追蹤/待辦項目。",
+      "items": {
+        "type": "object",
+        "required": ["item", "description", "owner", "status", "due_date"],
+        "properties": {
+          "item":        { "type": "string", "description": "項目名稱或編號" },
+          "description": { "type": "string", "description": "詳細說明" },
+          "owner":       { "type": "string", "description": "負責人姓名" },
+          "status":      { "type": "string", "description": "狀態，例如：待確認、進行中、已完成" },
+          "due_date":    { "type": "string", "description": "預定完成日，格式 YYYY/MM/DD 或空字串" }
+        }
+      }
+    },
+    "facilitator_note": {
+      "type": "string",
+      "description": "會議底部的補充備注，例如「投影：David; 記錄：Gior」。可為空字串。"
+    }
+  }
+}

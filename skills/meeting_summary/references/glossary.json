@@ -1,0 +1,26 @@
+{
+  "description": "Meeting Agent 專有名詞詞彙表。影響 Whisper 轉錄精準度與 Gemini 摘要的人名/術語一致性。",
+  "people": [
+    "Haohsun", "Fenny", "Simon", "Dan", "Jack",
+    "Ryan", "David", "Kenven", "Thomat", "Wisely",
+    "Brista", "Ashton", "Gior"
+  ],
+  "terms": [
+    "MIS", "ERP", "VPN", "BI", "MDM",
+    "IT", "VM", "Docker", "Kubernetes", "API",
+    "SLA", "KPI", "OKR","SAP"
+  ],
+  "meeting_types": [
+    "MIS週會", "月會", "專案進度會議"
+  ],
+  "custom_corrections": {
+    "好順": "Haohsun",
+    "好孫": "Haohsun",
+    "分泥": "Fenny",
+    "賽門": "Simon",
+    "推馬特": "Thomat",
+    "布里斯塔": "Brista",
+    "凱文": "Kenven",
+    "吉奧": "Gior"
+  }
+}
