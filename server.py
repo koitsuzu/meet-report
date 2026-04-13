@@ -14,6 +14,7 @@ import json
 import uuid
 import shutil
 import smtplib
+import zipfile
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
@@ -105,10 +106,26 @@ def process_meeting_job(job_id: str, video_path: str, description: str, email: s
 
         jobs[job_id]["status"] = "completed"
         jobs[job_id]["progress"] = 100
+        
+        output_files = result.get("output_files", [])
+        
+        # 將所有檔案打包成 zip
+        if output_files:
+            zip_filename = f"會議記錄與逐字稿_{job_id}.zip"
+            zip_path = Path("uploads") / job_id / zip_filename
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for fpath in output_files:
+                    p = Path(fpath)
+                    if p.exists():
+                        zipf.write(p, p.name)
+            
+            # 將前端下載的檔案指定為這個 zip 檔
+            output_files = [str(zip_path)]
+
         jobs[job_id]["result"] = {
             "final_answer": result.get("final_answer", ""),
             "route_history": result.get("route_history", []),
-            "output_files": result.get("output_files", []),
+            "output_files": output_files,
         }
 
         # Send email if configured

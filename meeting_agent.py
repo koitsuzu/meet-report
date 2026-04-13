@@ -365,6 +365,7 @@ def transcriber_node(state: AgentState) -> AgentState:
     return {
         **state,
         "transcript": transcript_text,
+        "output_files": state.get("output_files", []) + [str(raw_md_path)],
         "route_history": history,
     }
 
@@ -527,9 +528,10 @@ def summary_node(state: AgentState) -> AgentState:
         print(f"  ⚠️  文件生成過程出錯：{e}")
 
     # 收集產出檔案
-    output_files = [str(f) for f in output_dir.glob(f"{stem}.*")]
+    new_output_files = [str(f) for f in output_dir.glob(f"{stem}.*")]
+    all_output_files = state.get("output_files", []) + new_output_files
     print(f"  ✅ 文件生成完成！")
-    for f in output_files:
+    for f in new_output_files:
         print(f"     📁 {f}")
 
     # 組裝最終回覆
@@ -541,19 +543,19 @@ def summary_node(state: AgentState) -> AgentState:
 📝 討論者：{len(meeting_data.get('discussion', []))} 人
 📌 待辦事項：{len(meeting_data.get('action_items', []))} 項
 
-📁 產出檔案：
+📁 產出檔案（已打包）：
 """
-    for f in output_files:
-        final_answer += f"  - {f}\n"
+    for f in all_output_files:
+        final_answer += f"  - {Path(f).name}\n"
 
     history = state.get("route_history", []) + [
-        f"summary：✅ 完成結構化提取與文件生成（{len(output_files)} 個檔案）"
+        f"summary：✅ 完成結構化提取與文件生成（{len(new_output_files)} 個檔案）"
     ]
 
     return {
         **state,
         "meeting_json": json.dumps(meeting_data, ensure_ascii=False),
-        "output_files": output_files,
+        "output_files": all_output_files,
         "final_answer": final_answer,
         "route_history": history,
     }
