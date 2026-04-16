@@ -39,8 +39,23 @@ from langchain_groq import ChatGroq
 # ── Groq for Whisper ──────────────────────────────────────────────────────────
 from groq import Groq
 
-# ── moviepy for audio extraction ──────────────────────────────────────────────
-from moviepy import VideoFileClip
+# ── FFmpeg utils ──────────────────────────────────────────────────────────────
+def _get_ffmpeg_cmd():
+    """動態尋找 ffmpeg，若無系統版則使用 imageio_ffmpeg 內建版。"""
+    import shutil
+    if shutil.which("ffmpeg"):
+        return "ffmpeg"
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        raise RuntimeError(
+            "找不到 ffmpeg！請確認已安裝系統版，或者執行 'pip install imageio-ffmpeg'\n"
+            "  本機：brew install ffmpeg / apt install ffmpeg\n"
+            "  Render：在 Build Command 加上 apt-get install -y ffmpeg"
+        )
+
+FFMPEG_CMD = _get_ffmpeg_cmd()
 
 
 # ============================================================================
@@ -54,24 +69,28 @@ if not GEMINI_API_KEY:
     print("❌ 錯誤：請在 .env 中設定 GEMINI_API_KEY")
     sys.exit(1)
 
-# Supervisor 用 Gemini 2.5 Flash（用量極少，適合雲端）
+# 1. 核心模型 (Supervisor / Fallback)
 llm = ChatGoogleGenerativeAI(
     model="gemini-2.5-flash",
     google_api_key=GEMINI_API_KEY,
     temperature=0,
 )
-print("✅ Supervisor LLM: Gemini 2.5 Flash")
+print("✅ Core LLM: Gemini 2.5 Flash")
 
-# Summary 用 Groq Llama（用量最大，優先選可本地部署的開源模型）
+# 2. 摘要模型 (優先使用 Groq Llama)
 if GROQ_API_KEY:
-    summary_llm = ChatGroq(
-        model="llama-3.3-70b-versatile",
-        api_key=GROQ_API_KEY,
-        temperature=0,
-    )
-    print("✅ Summary LLM: Groq Llama 3.3 70B (可本地替換為 Ollama)")
+    try:
+        summary_llm = ChatGroq(
+            model="llama-3.3-70b-versatile",
+            api_key=GROQ_API_KEY,
+            temperature=0,
+        )
+        print("✅ Primary Summary LLM: Groq Llama 3.3 70B")
+    except Exception as e:
+        summary_llm = None
+        print(f"⚠️  Groq 初始化失敗，將改用 Gemini: {e}")
 else:
-    summary_llm = llm  # fallback 到 Gemini
+    summary_llm = None
     print("⚠️  GROQ_API_KEY 未設定，Summary 改用 Gemini")
 
 
@@ -185,10 +204,15 @@ def supervisor_node(state: AgentState) -> AgentState:
 def transcriber_node(state: AgentState) -> AgentState:
     """
     負責：
-    1. 從影片提取音訊 (moviepy)
-    2. 呼叫 Groq Whisper API 取得逐字稿
-    3. 將逐字稿寫入 state
+    1. 從影片提取音訊 (FFmpeg，記憶體用量 < 20 MB)
+    2. 若音訊超過 20MB，自動切分為每 10 分鐘一段
+    3. 依序呼叫 Groq Whisper API 取得各段逐字稿
+    4. 校正各段時間軸偏移後，合併為一份完整逐字稿
+    5. 將逐字稿寫入 state
     """
+    CHUNK_SECONDS = 600       # 每段 10 分鐘
+    MAX_FILE_SIZE_MB = 20     # 超過此大小才啟用切分
+
     video_path = Path(state["video_path"])
     if not video_path.exists():
         history = state.get("route_history", []) + [
@@ -207,12 +231,39 @@ def transcriber_node(state: AgentState) -> AgentState:
     temp_dir = Path(tempfile.mkdtemp())
     audio_path = temp_dir / f"{video_path.stem}.mp3"
 
-    print(f"  📢 正在提取音訊...")
+    print(f"  📢 正在提取音訊（FFmpeg）...")
     try:
-        video = VideoFileClip(str(video_path))
-        video.audio.write_audiofile(str(audio_path), logger=None)
-        video.close()
+        # ── 用 imageio_ffmpeg 取得影片總秒數（迴避 ffprobe 缺失問題）──
+        import imageio_ffmpeg
+        # count_frames_and_secs 回傳 (nframes, total_seconds)
+        duration = float(imageio_ffmpeg.count_frames_and_secs(str(video_path))[1])
+
+        # ── 用 ffmpeg 串流提取音訊，全程記憶體用量 < 20 MB ──
+        subprocess.run(
+            [
+                FFMPEG_CMD, "-y",
+                "-i", str(video_path),
+                "-vn",                      # 不要影像
+                "-acodec", "libmp3lame",    # 輸出 MP3
+                "-q:a", "4",                # 品質 4（約 128 kbps，夠 Whisper 用）
+                "-ar", "16000",             # 16 kHz 取樣（Whisper 最佳輸入）
+                "-ac", "1",                 # 單聲道（進一步縮小檔案）
+                str(audio_path),
+            ],
+            capture_output=True, check=True,
+        )
         print(f"  ✅ 音訊已提取至 {audio_path.name}")
+    except subprocess.CalledProcessError as e:
+        err_msg = e.stderr.decode(errors="replace") if e.stderr else str(e)
+        history = state.get("route_history", []) + [
+            f"transcriber：❌ 音訊提取失敗 {err_msg[:200]}"
+        ]
+        return {
+            **state,
+            "transcript": "",
+            "final_answer": f"錯誤：音訊提取失敗 - {err_msg[:200]}",
+            "route_history": history,
+        }
     except Exception as e:
         history = state.get("route_history", []) + [
             f"transcriber：❌ 音訊提取失敗 {e}"
@@ -224,11 +275,11 @@ def transcriber_node(state: AgentState) -> AgentState:
             "route_history": history,
         }
 
-    # 4b. 檢查音訊檔大小，若超過 25MB 則需要分割
+    # 4b. 檢查音訊檔大小，決定是否需要切分
     file_size_mb = audio_path.stat().st_size / (1024 * 1024)
-    print(f"  📊 音訊大小：{file_size_mb:.1f} MB")
+    print(f"  📊 音訊大小：{file_size_mb:.1f} MB（影片長度：{int(duration // 60)} 分 {int(duration % 60)} 秒）")
 
-    # 4c. 呼叫 Groq Whisper API
+    # 4c. 檢查 API Key
     if not GROQ_API_KEY:
         print("  ⚠️  未設定 GROQ_API_KEY，無法使用 Groq Whisper")
         history = state.get("route_history", []) + [
@@ -241,20 +292,146 @@ def transcriber_node(state: AgentState) -> AgentState:
             "route_history": history,
         }
 
+    # 4d. 準備音訊檔案清單（若需要切分）
+    chunk_files = []  # list of (audio_file_path, time_offset_seconds)
+
+    if file_size_mb <= MAX_FILE_SIZE_MB:
+        # 小檔案：不切分，直接用原始音訊
+        chunk_files.append((audio_path, 0))
+        print(f"  📦 音訊大小未超過 {MAX_FILE_SIZE_MB}MB，無需切分")
+    else:
+        # 大檔案：使用 FFmpeg 切分為每 10 分鐘一段
+        total_chunks = int(duration // CHUNK_SECONDS) + (1 if duration % CHUNK_SECONDS > 0 else 0)
+        print(f"  ✂️  音訊超過 {MAX_FILE_SIZE_MB}MB，將切分為 {total_chunks} 段（每段 {CHUNK_SECONDS // 60} 分鐘）")
+
+        try:
+            for i, start_time in enumerate(range(0, int(duration), CHUNK_SECONDS)):
+                end_time = min(start_time + CHUNK_SECONDS, duration)
+                chunk_path = temp_dir / f"chunk_{i:03d}.mp3"
+
+                # ── FFmpeg 直接從原始影片切出該區間的音訊 ──
+                # -ss / -t 在輸入端做 seek，速度快且記憶體用量固定 < 10 MB
+                subprocess.run(
+                    [
+                        FFMPEG_CMD, "-y",
+                        "-ss", str(start_time),         # seek 到起始秒
+                        "-t",  str(end_time - start_time),  # 擷取長度
+                        "-i",  str(video_path),
+                        "-vn",
+                        "-acodec", "libmp3lame",
+                        "-q:a", "4",
+                        "-ar", "16000",
+                        "-ac", "1",
+                        str(chunk_path),
+                    ],
+                    capture_output=True, check=True,
+                )
+
+                chunk_size_mb = chunk_path.stat().st_size / (1024 * 1024)
+                print(f"    📎 片段 {i + 1}/{total_chunks}：{start_time // 60:.0f}m ~ {end_time // 60:.0f}m（{chunk_size_mb:.1f} MB）")
+                chunk_files.append((chunk_path, start_time))
+
+        except subprocess.CalledProcessError as e:
+            err_msg = e.stderr.decode(errors="replace") if e.stderr else str(e)
+            history = state.get("route_history", []) + [
+                f"transcriber：❌ 音訊切分失敗 {err_msg[:200]}"
+            ]
+            return {
+                **state,
+                "transcript": "",
+                "final_answer": f"錯誤：音訊切分失敗 - {err_msg[:200]}",
+                "route_history": history,
+            }
+
+        # 刪除原始的完整音訊檔（已切分完畢）
+        if audio_path.exists():
+            audio_path.unlink()
+
+    # 4e. 依序將每段音訊送給 Groq Whisper API，校正時間軸後合併
     print(f"  🎙️  正在呼叫 Groq Whisper API (whisper-large-v3-turbo)...")
     try:
-        groq_client = Groq(api_key=GROQ_API_KEY)
-        with open(audio_path, "rb") as f:
-            # prompt 參數注入詞彙表，提高專有名詞辨識準確度
-            response = groq_client.audio.transcriptions.create(
-                model="whisper-large-v3-turbo",
-                file=(audio_path.name, f.read()),
-                response_format="verbose_json",
-                prompt=WHISPER_PROMPT_HINT if WHISPER_PROMPT_HINT else None,
-            )
+        # 支援多把 API Key 自動輪替
+        keys_env = os.getenv("GROQ_API_KEYS", "")
+        api_keys = [k.strip() for k in keys_env.split(",") if k.strip()]
+        if not api_keys and GROQ_API_KEY:
+            api_keys = [GROQ_API_KEY]
+            
+        if not api_keys:
+            raise ValueError("未設定任何 Groq API Key")
+            
+        current_key_idx = 0
+        groq_client = Groq(api_key=api_keys[current_key_idx])
+        
+        all_segments = []      # 合併所有片段的 segments（時間軸已校正）
+        detected_language = ""
 
-        # 組裝逐字稿文字 + 說話者分離
-        segments = response.segments
+        for chunk_idx, (chunk_path, time_offset) in enumerate(chunk_files):
+            if len(chunk_files) > 1:
+                print(f"    🔄 正在轉錄片段 {chunk_idx + 1}/{len(chunk_files)}...")
+
+            while True:
+                try:
+                    with open(chunk_path, "rb") as f:
+                        response = groq_client.audio.transcriptions.create(
+                            model="whisper-large-v3-turbo",
+                            file=(chunk_path.name, f.read()),
+                            response_format="verbose_json",
+                            prompt=WHISPER_PROMPT_HINT if WHISPER_PROMPT_HINT else None,
+                        )
+                    success = True
+                    break # 成功，跳出 retry 迴圈
+                except Exception as e:
+                    err_str = str(e).lower()
+                    if "429" in err_str or "rate limit" in err_str or "rate_limit" in err_str:
+                        # 還有下一把可以換？
+                        current_key_idx = (current_key_idx + 1) % len(api_keys)
+                        if current_key_idx != 0:
+                            print(f"    ⚠️  第 {current_key_idx + 1} 把 API Key 遇到額度限制，切換至下一把...")
+                            groq_client = Groq(api_key=api_keys[current_key_idx])
+                            import time
+                            time.sleep(2)
+                            continue
+                        else:
+                            # 已經輪過一圈（代表所有鑰匙都滿了，或者都屬同一個號）
+                            import re, time
+                            wait_time = 120 # 預設等 2 分鐘
+                            m = re.search(r"try again in (?:(\d+)m)?([\d\.]+)s", err_str)
+                            if m:
+                                mins = int(m.group(1)) if m.group(1) else 0
+                                secs = float(m.group(2))
+                                wait_time = int(mins * 60 + secs) + 15 # 多等 15 秒保險
+                            
+                            print(f"    ⏳ API 額度用盡！智能排隊：自動等待 {wait_time} 秒後恢復轉錄 (不中斷長影片)...")
+                            time.sleep(wait_time)
+                            continue # 等完繼續挑戰目前的 chunk
+                    else:
+                        print(f"    ❌ 未知嚴重錯誤：{e}")
+                        break # 跳出 while，直接當作失敗
+                        
+            if not success:
+                print(f"    ⚠️ 轉錄在本段遇到不可恢復錯誤。將保留已轉錄好的 {len(all_segments)} 段內容並進入下一步。")
+                break # 放棄後續的 chunks，但不要當機，讓系統產生部分紀錄！
+
+            # 記錄語言（取第一段的偵測結果）
+            if not detected_language:
+                detected_language = response.language
+
+            # 校正時間軸偏移：每個 segment 的 start/end 加上該段的起始秒數
+            for seg in response.segments:
+                seg["start"] += time_offset
+                seg["end"] += time_offset
+                all_segments.append(seg)
+
+            if len(chunk_files) > 1:
+                print(f"    ✅ 片段 {chunk_idx + 1} 完成（{len(response.segments)} 段）")
+
+            # 轉錄完畢，刪除該切片暫存檔
+            if chunk_path.exists():
+                chunk_path.unlink()
+
+        segments = all_segments
+        print(f"  📊 全部片段合併完成：共 {len(segments)} 段")
+
         SPEAKER_CHANGE_GAP = 1.5  # 超過 1.5 秒停頓視為換人說話
 
         # ── 簡易說話者辨識（基於停頓偵測）──
@@ -305,7 +482,8 @@ def transcriber_node(state: AgentState) -> AgentState:
         md_lines.append(f"| 項目 | 內容 |")
         md_lines.append(f"|------|------|")
         md_lines.append(f"| 檔案 | `{video_path.name}` |")
-        md_lines.append(f"| 語言 | {response.language} |")
+        md_lines.append(f"| 語言 | {detected_language} |")
+        md_lines.append(f"| 切分片段 | {len(chunk_files)} 段 |")
         md_lines.append(f"| 總段數 | {len(segments)} |")
         md_lines.append(f"| 偵測說話者 | {unique_speakers} 人 |")
         md_lines.append(f"| 產出時間 | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} |")
@@ -338,7 +516,7 @@ def transcriber_node(state: AgentState) -> AgentState:
         md_lines.append(f"*Generated by Meeting Agent — Whisper transcription with pause-based speaker detection*")
 
         raw_md_path.write_text("\n".join(md_lines), encoding="utf-8")
-        print(f"  ✅ 轉錄完成！語言：{response.language}，共 {len(segments)} 段，約 {word_count} 詞")
+        print(f"  ✅ 轉錄完成！語言：{detected_language}，共 {len(segments)} 段，約 {word_count} 詞")
         print(f"  📄 逐字稿已儲存：{raw_md_path}")
         print(f"  👥 偵測到約 {unique_speakers} 位不同說話者")
 
@@ -354,12 +532,13 @@ def transcriber_node(state: AgentState) -> AgentState:
             "route_history": history,
         }
     finally:
-        # 清理暫存
-        if audio_path.exists():
-            audio_path.unlink()
+        # 清理暫存目錄中剩餘的檔案
+        import shutil as _shutil
+        if temp_dir.exists():
+            _shutil.rmtree(temp_dir, ignore_errors=True)
 
     history = state.get("route_history", []) + [
-        f"transcriber：✅ 完成轉錄（{len(segments)} 段，{unique_speakers} 位說話者）"
+        f"transcriber：✅ 完成轉錄（{len(chunk_files)} 段切分，{len(segments)} 段文字，{unique_speakers} 位說話者）"
     ]
 
     return {
@@ -447,55 +626,61 @@ def summary_node(state: AgentState) -> AgentState:
 
     print(f"\n📝 Summary Agent 開始處理...")
 
-    # 5a. 呼叫 Groq Llama 提取結構化資料
-    print(f"  🤖 正在呼叫 Llama 3.3 70B 提取會議結構化資料...")
-    try:
-        result = summary_llm.invoke([
-            ("system", SUMMARY_SYSTEM),
-            ("human", f"""
-使用者描述：{user_query}
+    # 5a. 嘗試使用主要摘要模型 (Groq)
+    meeting_data = None
+    applied_llm_name = "Groq Llama 3.3"
+    
+    if summary_llm:
+        print(f"  🤖 優先嘗試使用 Groq Llama 3.3 提取會議結構化資料...")
+        try:
+            result = summary_llm.invoke([
+                ("system", SUMMARY_SYSTEM),
+                ("human", f"使用者描述：{user_query}\n\n以下是會議的逐字稿：\n{transcript}\n\n請從中提取結構化的會議記錄 JSON。")
+            ])
+            raw_json = result.content.strip()
+            # 清理 JSON
+            if "```json" in raw_json:
+                raw_json = raw_json.split("```json")[1].split("```")[0].strip()
+            elif "```" in raw_json:
+                raw_json = raw_json.split("```")[1].split("```")[0].strip()
+            
+            meeting_data = json.loads(raw_json)
+            print(f"  ✅ Groq 摘要成功！")
+        except Exception as e:
+            print(f"  ⚠️  Groq 摘要失敗（{type(e).__name__}），準備切換至 Gemini 代理執行...")
+            applied_llm_name = "Gemini 2.5 Flash (Fallback)"
+    else:
+        applied_llm_name = "Gemini 2.5 Flash (Default)"
 
-以下是會議的逐字稿：
-{transcript}
+    # Fallback to Gemini if Groq failed or not available
+    if meeting_data is None:
+        print(f"  🚀 正在使用 Gemini 2.5 Flash 提取會議結構化資料...")
+        try:
+            result = llm.invoke([
+                ("system", SUMMARY_SYSTEM),
+                ("human", f"使用者描述：{user_query}\n\n以下是會議的逐字稿：\n{transcript}\n\n請從中提取結構化的會議記錄 JSON。")
+            ])
+            raw_json = result.content.strip()
+            if "```json" in raw_json:
+                raw_json = raw_json.split("```json")[1].split("```")[0].strip()
+            elif "```" in raw_json:
+                raw_json = raw_json.split("```")[1].split("```")[0].strip()
+            
+            meeting_data = json.loads(raw_json)
+            print(f"  ✅ Gemini 摘要成功！")
+        except Exception as e:
+            print(f"  ❌ 所有摘要模型均失敗：{e}")
+            history = state.get("route_history", []) + [f"summary：❌ 摘要失敗（{applied_llm_name}）"]
+            return {
+                **state,
+                "final_answer": f"錯誤：摘要提取失敗 - {e}",
+                "route_history": history,
+            }
 
-請從中提取結構化的會議記錄 JSON。
-""")
-        ])
-
-        # 清理 JSON（移除可能的 markdown 標記）
-        raw_json = result.content.strip()
-        if raw_json.startswith("```"):
-            raw_json = raw_json.split("\n", 1)[1]  # 移除第一行的 ```json
-        if raw_json.endswith("```"):
-            raw_json = raw_json.rsplit("```", 1)[0]
-        raw_json = raw_json.strip()
-
-        meeting_data = json.loads(raw_json)
-        print(f"  ✅ 結構化資料提取完成！")
-        print(f"     - 討論者：{len(meeting_data.get('discussion', []))} 人")
-        print(f"     - 待辦事項：{len(meeting_data.get('action_items', []))} 項")
-
-    except json.JSONDecodeError as e:
-        print(f"  ❌ JSON 解析失敗：{e}")
-        print(f"  原始回覆前 500 字：{raw_json[:500]}")
-        history = state.get("route_history", []) + [
-            f"summary：❌ JSON 解析失敗"
-        ]
-        return {
-            **state,
-            "final_answer": f"錯誤：Gemini 回傳的 JSON 無法解析 - {e}",
-            "route_history": history,
-        }
-    except Exception as e:
-        print(f"  ❌ Gemini API 錯誤：{e}")
-        history = state.get("route_history", []) + [
-            f"summary：❌ Gemini API 失敗 {e}"
-        ]
-        return {
-            **state,
-            "final_answer": f"錯誤：Gemini 摘要失敗 - {e}",
-            "route_history": history,
-        }
+    # 5a 結尾：記錄成功 log
+    print(f"     - 使用模型：{applied_llm_name}")
+    print(f"     - 討論者：{len(meeting_data.get('discussion', []))} 人")
+    print(f"     - 待辦事項：{len(meeting_data.get('action_items', []))} 項")
 
     # 5b. 儲存 JSON
     output_dir = Path("output") / "meetings"
@@ -549,7 +734,7 @@ def summary_node(state: AgentState) -> AgentState:
         final_answer += f"  - {Path(f).name}\n"
 
     history = state.get("route_history", []) + [
-        f"summary：✅ 完成結構化提取與文件生成（{len(new_output_files)} 個檔案）"
+        f"summary：✅ 完成結構化提取與文件生成（使用 {applied_llm_name}，共 {len(new_output_files)} 個檔案）"
     ]
 
     return {
