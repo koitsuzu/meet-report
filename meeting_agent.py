@@ -569,8 +569,9 @@ else:
     GLOSSARY = {"people": [], "terms": [], "custom_corrections": {}}
     print(f"⚠️  找不到 glossary.json: {GLOSSARY_PATH}")
 
-# 為 Whisper 組合 prompt hint（提高專有名詞辨識率）
-WHISPER_PROMPT_HINT = "、".join(GLOSSARY.get("people", []) + GLOSSARY.get("terms", []))
+# 為 Whisper 組合 prompt hint（提高語境與專有名詞辨識率）
+_glossary_terms = "、".join(GLOSSARY.get("people", []) + GLOSSARY.get("terms", []))
+WHISPER_PROMPT_HINT = f"這是一場包含繁體中文與專有名詞的會議。內容提及：{_glossary_terms}" if _glossary_terms else "這是一場繁體中文會議。"
 
 # 為 Gemini Summary 組合名詞校正指引
 GLOSSARY_PROMPT_SECTION = ""
